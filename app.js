@@ -84,10 +84,32 @@ function templateChordTimeline(hpcps,frameTimes){
   }
   return {chords,strengths,frameTimes};
 }
+
+function detectRhythm(vec){
+  // Essentia RhythmExtractor2013 returns global BPM plus the actual beat tick
+  // positions in seconds. Those ticks become PlayMaster's musical time grid.
+  try{
+    const out=essentia.RhythmExtractor2013(vec,208,'multifeature',40);
+    return {bpm:Number(out.bpm)||0,ticks:normalizeChordResult(out.ticks).map(Number),confidence:Number(out.confidence)||0};
+  }catch(err){
+    console.warn('RhythmExtractor2013 failed',err);
+    return {bpm:0,ticks:[],confidence:0};
+  }
+}
+function nearestBeatIndex(t,ticks){
+  if(!ticks?.length)return null; let best=0,dist=Infinity;
+  for(let i=0;i<ticks.length;i++){const d=Math.abs(ticks[i]-t);if(d<dist){dist=d;best=i}}
+  return {index:best+1,time:ticks[best],distance:dist};
+}
+function addBeatLabels(runs,ticks){
+  if(!ticks?.length)return runs;
+  return runs.map(r=>({...r,startBeat:nearestBeatIndex(r.start,ticks),endBeat:nearestBeatIndex(r.end,ticks)}));
+}
+
 function renderDetected(runs,key,scale,bpm){
   if(!runs.length)return;
   model={title:selectedFile?.name?.replace(/\.[^.]+$/,'')||'Analysed recording',artist:'Local audio · machine analysed',key:`${key} ${scale}`,tempo:bpm||model.tempo,section:'Detected harmony',chords:runs.map(r=>r.chord),timeline:runs};
-  $('song').value=''; draw(); $('bars').innerHTML=runs.map((r,i)=>`<div class="bar detected" data-i="${i}"><span class="n">${fmt(r.start)}–${fmt(r.end)}</span><div class="chord">${r.chord}</div><div class="confidence">${Math.round((r.confidence||0)*100)}% strength</div></div>`).join('');
+  $('song').value=''; draw(); $('bars').innerHTML=runs.map((r,i)=>{const beat=r.startBeat?` · beat ${r.startBeat.index}`:'';return `<div class="bar detected" data-i="${i}"><span class="n">${fmt(r.start)}–${fmt(r.end)}${beat}</span><div class="chord">${r.chord}</div><div class="confidence">${Math.round((r.confidence||0)*100)}% strength</div></div>`}).join('');
 }
 const baseIndex=index;
 index=function(){if(model.timeline&&model.timeline.length){const t=audio.currentTime;let i=model.timeline.findIndex(r=>t>=r.start&&t<r.end);return i<0?Math.max(0,model.timeline.length-1):i;}return baseIndex();};
@@ -96,14 +118,17 @@ $('analyse').onclick=async()=>{
   $('analyse').disabled=true;$('analysisStatus').textContent='Decoding audio…';
   try{
     const ctx=new (window.AudioContext||window.webkitAudioContext)(); const ab=await selectedFile.arrayBuffer(); const buffer=await ctx.decodeAudioData(ab.slice(0));
-    $('analysisStatus').textContent='Analysing key and chord progression…'; await new Promise(r=>setTimeout(r,30));
+    $('analysisStatus').textContent='Analysing key, tempo and beat positions…'; await new Promise(r=>setTimeout(r,30));
     const mono=monoFromBuffer(buffer); const vec=essentia.arrayToVector(mono);
     const keyOut=essentia.KeyExtractor(vec,true,4096,4096,12,3500,60,25,0.2,'bgate',buffer.sampleRate);
+    const rhythm=detectRhythm(vec);
+    $('detectedTempo').textContent=rhythm.bpm?`${Math.round(rhythm.bpm)} BPM`:'—'; $('beatConfidence').textContent=rhythm.confidence?`${Math.round(rhythm.confidence*100)}%`:'—'; $('beatCount').textContent=String(rhythm.ticks.length);
     $('analysisStatus').textContent='Building harmonic pitch profiles and chord timeline…'; await new Promise(r=>setTimeout(r,20));
     const detected=detectChordTimeline(mono,buffer.sampleRate,buffer.duration);
-    const runs=compressChordFrames(detected.chords,detected.strengths,detected.frameTimes,buffer.duration);
+    let runs=compressChordFrames(detected.chords,detected.strengths,detected.frameTimes,buffer.duration);
+    runs=addBeatLabels(runs,rhythm.ticks);
     $('detectedKey').textContent=`${keyOut.key} ${keyOut.scale}`;$('keyConfidence').textContent=Math.round((keyOut.strength||0)*100)+'%';$('chordCount').textContent=String(runs.length);
-    renderDetected(runs,keyOut.key,keyOut.scale,null); $('analysisStatus').textContent=`Analysis complete — ${runs.length} harmonic regions detected. These are machine estimates, not hand-entered chords.`;
+    renderDetected(runs,keyOut.key,keyOut.scale,rhythm.bpm?Math.round(rhythm.bpm):null); $('analysisStatus').textContent=`Analysis complete — ${Math.round(rhythm.bpm||0)} BPM, ${rhythm.ticks.length} beats and ${runs.length} harmonic regions detected. These are machine estimates.`;
     try{vec.delete?.()}catch{} await ctx.close();
   }catch(err){console.error(err);$('analysisStatus').textContent='Analysis failed on this file: '+err.message;}
   finally{$('analyse').disabled=false;}
