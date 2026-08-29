@@ -1,4 +1,4 @@
-# PlayMaster v0.1 — real-analysis prototype
+# PlayMaster v0.1.1 — chord-analysis repair
 
 © 2026 Music Apps UK.
 
@@ -29,3 +29,7 @@ This build proves the first genuine PlayMaster analysis path in the browser.
 4. Chord smoothing/confidence thresholds and correction UI.
 5. Lawful Internet-hosted test track and/or local-file workflow.
 6. Stem separation experiment after the tonal pipeline is validated.
+
+
+## v0.1.1
+Repairs the Android/browser chord path by explicitly computing frame spectra, spectral peaks and 12-bin HPCPs before chord estimation. The known G-major test remains a ground-truth test only; its chord sequence is not embedded in the analyser.
